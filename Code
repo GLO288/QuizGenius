@@ -1,0 +1,345 @@
+import SwiftUI
+
+// Define the data structure for a quiz question
+struct QuizData: Identifiable {
+    var id = UUID()
+    var question: String
+    var options: [String]
+    var answer: String
+}
+
+// Define the data structure for a quiz
+struct Quiz: Identifiable {
+    var id = UUID()
+    var name: String
+    var questions: [QuizData]
+}
+
+// ViewModel to manage quiz state
+class QuizViewModel: ObservableObject {
+    @Published var quizzes: [Quiz] = []
+    @Published var currentQuizIndex: Int? = nil
+    @Published var currentQuestionIndex = 0
+    @Published var score = 0
+    @Published var incorrectAnswers: [(question: String, incorrectAnswer: String, correctAnswer: String)] = []
+    @Published var isQuizCompleted = false
+    @Published var isSubmitVisible = false
+
+    var currentQuiz: Quiz? {
+        if let index = currentQuizIndex {
+            return quizzes[index]
+        }
+        return nil
+    }
+
+    func addQuiz(name: String) {
+        quizzes.append(Quiz(name: name, questions: []))
+    }
+
+    func addQuestionToCurrentQuiz(question: String, options: [String], answer: String) {
+        if let index = currentQuizIndex {
+            quizzes[index].questions.append(QuizData(question: question, options: options, answer: answer))
+        }
+    }
+
+    func shuffleOptions(for questionIndex: Int) -> [String] {
+        var options = currentQuiz?.questions[questionIndex].options ?? []
+        options.shuffle()
+        return options
+    }
+
+    func checkAnswer(_ answer: String) {
+        guard let quiz = currentQuiz else { return }
+        let correctAnswer = quiz.questions[currentQuestionIndex].answer
+        if answer == correctAnswer {
+            score += 1
+        } else {
+            incorrectAnswers.append((question: quiz.questions[currentQuestionIndex].question, incorrectAnswer: answer, correctAnswer: correctAnswer))
+        }
+
+        if currentQuestionIndex < quiz.questions.count - 1 {
+            currentQuestionIndex += 1
+        } else {
+            isSubmitVisible = true
+        }
+    }
+
+    func submitQuiz() {
+        isQuizCompleted = true
+        isSubmitVisible = false
+    }
+
+    func resetQuiz() {
+        currentQuestionIndex = 0
+        score = 0
+        incorrectAnswers = []
+        isQuizCompleted = false
+        isSubmitVisible = false
+    }
+}
+
+// Home screen to display all quizzes
+struct HomeView: View {
+    @StateObject private var viewModel = QuizViewModel()
+    @State private var showingAddQuizView = false
+
+    var body: some View {
+        NavigationView {
+            VStack {
+                if viewModel.quizzes.isEmpty {
+                    Text("No quizzes available.")
+                        .font(.title2)
+                        .padding()
+                        .foregroundColor(.gray)
+                } else {
+                    List {
+                        ForEach(viewModel.quizzes) { quiz in
+                            NavigationLink(destination: QuizView(viewModel: viewModel, quiz: quiz)) {
+                                Text(quiz.name)
+                            }
+                        }
+                    }
+                }
+
+                Button(action: {
+                    showingAddQuizView = true
+                }) {
+                    Text("Add New Quiz")
+                        .font(.headline)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                }
+                .padding(.bottom, 20)
+                .sheet(isPresented: $showingAddQuizView) {
+                    AddQuizView(viewModel: viewModel, isPresented: $showingAddQuizView)
+                }
+            }
+            .navigationTitle("Home")
+            .padding()
+        }
+    }
+}
+
+// View to add new quizzes
+struct AddQuizView: View {
+    @ObservedObject var viewModel: QuizViewModel
+    @Binding var isPresented: Bool
+
+    @State private var quizName = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Quiz Name")) {
+                    TextField("Enter quiz name", text: $quizName)
+                }
+            }
+            .navigationTitle("Add Quiz")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard !quizName.isEmpty else { return }
+                        viewModel.addQuiz(name: quizName)
+                        isPresented = false
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Main quiz view to display and answer questions
+struct QuizView: View {
+    @ObservedObject var viewModel: QuizViewModel
+    var quiz: Quiz
+    @State private var showingAddQuestionView = false
+
+    var body: some View {
+        VStack {
+            if viewModel.isQuizCompleted {
+                VStack {
+                    Text("Quiz Completed!")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .padding()
+                    Text("You scored \(viewModel.score) out of \(quiz.questions.count).")
+                        .font(.title2)
+                        .padding(.bottom, 20)
+
+                    if !viewModel.incorrectAnswers.isEmpty {
+                        ScrollView {
+                            ForEach(viewModel.incorrectAnswers, id: \.question) { item in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("Question: \(item.question)")
+                                        .fontWeight(.bold)
+                                    Text("Your Answer: \(item.incorrectAnswer)")
+                                        .foregroundColor(.red)
+                                    Text("Correct Answer: \(item.correctAnswer)")
+                                        .foregroundColor(.green)
+                                    Divider()
+                                }
+                                .padding()
+                            }
+                        }
+                    }
+
+                    Button(action: {
+                        viewModel.resetQuiz()
+                    }) {
+                        Text("Retry Quiz")
+                            .font(.headline)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                            .padding(.horizontal)
+                    }
+                }
+            } else {
+                VStack {
+                    Text(quiz.questions[viewModel.currentQuestionIndex].question)
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .multilineTextAlignment(.center)
+                        .padding()
+
+                    Spacer()
+
+                    ForEach(viewModel.shuffleOptions(for: viewModel.currentQuestionIndex), id: \.self) { option in
+                        Button(action: {
+                            viewModel.checkAnswer(option)
+                        }) {
+                            Text(option)
+                                .font(.headline)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                                .padding(.horizontal)
+                        }
+                        .padding(.bottom, 5)
+                    }
+
+                    if viewModel.isSubmitVisible {
+                        Button(action: {
+                            viewModel.submitQuiz()
+                        }) {
+                            Text("Submit")
+                                .font(.headline)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(Color.orange)
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                                .padding(.horizontal)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        if viewModel.currentQuestionIndex > 0 {
+                            viewModel.currentQuestionIndex -= 1
+                        }
+                    }) {
+                        Text("Back")
+                            .font(.headline)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.gray)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                            .padding(.horizontal)
+                    }
+                    .padding(.top, 10)
+
+                    Button(action: {
+                        showingAddQuestionView = true
+                    }) {
+                        Text("Add Question")
+                            .font(.headline)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                            .padding(.horizontal)
+                    }
+                    .padding(.top, 10)
+                    .sheet(isPresented: $showingAddQuestionView) {
+                        AddQuestionView(viewModel: viewModel, isPresented: $showingAddQuestionView)
+                    }
+                }
+            }
+        }
+        .navigationTitle(quiz.name)
+        .padding()
+        .onAppear {
+            viewModel.currentQuizIndex = viewModel.quizzes.firstIndex(where: { $0.id == quiz.id })
+            viewModel.resetQuiz()
+        }
+    }
+}
+
+// View to add new quiz questions
+struct AddQuestionView: View {
+    @ObservedObject var viewModel: QuizViewModel
+    @Binding var isPresented: Bool
+
+    @State private var question = ""
+    @State private var options = ["", "", "", ""]
+    @State private var answer = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Question")) {
+                    TextField("Enter your question", text: $question)
+                }
+
+                Section(header: Text("Options")) {
+                    ForEach(0..<4, id: \.self) { index in
+                        TextField("Option \(index + 1)", text: $options[index])
+                    }
+                }
+
+                Section(header: Text("Correct Answer")) {
+                    TextField("Enter the correct answer", text: $answer)
+                }
+            }
+        .navigationTitle("Add Question")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    isPresented = false
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    guard !question.isEmpty, !answer.isEmpty, options.allSatisfy({ !$0.isEmpty }) else { return }
+                    viewModel.addQuestionToCurrentQuiz(question: question, options: options, answer: answer)
+                    isPresented = false
+                }
+            }
+        }
+    }
+// Main app entry point
+@main
+struct QuizApp: App {
+    var body: some Scene {
+        WindowGroup {
+            HomeView()
+        }
+    }
+}
